@@ -1,0 +1,77 @@
+---
+title: "LDA_QDA"
+author: "Haoyang Zhang"
+date: "2024-05-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import_dataset}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL
+```
+
+```{r encoding}
+# factors
+factors <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in factors) {
+  dataset[[var]] <- as.factor(dataset[[var]])
+}
+```
+
+```{r spliting}
+set.seed(2024)
+N <- nrow(dataset)
+train_indices <- sample(1:N, size = N*0.7)
+train_set <- dataset[train_indices, ]
+test_set <- dataset[-train_indices, ]
+```
+
+```{r classificantion_threshold}
+threshold <- mean(as.integer(dataset$Heart.Attack.Risk) - 1)
+```
+
+```{r}
+# record the best subset according the AIC selection
+best_subset <- as.formula("Heart.Attack.Risk ~ Cholesterol + Diabetes + Sleep.Hours.Per.Day")
+```
+
+```{r lda_fit}
+lda_fit <- lda(best_subset, data = train_set)
+lda_fit
+```
+
+```{r lda_err}
+# training
+lda_pred <- predict(lda_fit, train_set)
+lda_class <- lda_pred$class
+mean(lda_class != train_set$Heart.Attack.Risk)
+table(lda_class, train_set$Heart.Attack.Risk)
+# testing
+lda_pred <- predict(lda_fit, test_set)
+lda_class <- lda_pred$class
+mean(lda_class != test_set$Heart.Attack.Risk)
+table(lda_class, test_set$Heart.Attack.Risk)
+```
+
+```{r}
+df <- data.frame(Accuracy = c(0.640, 0.647),
+               Error = c(0.360, 0.353),
+               Sensitivity = c(NaN, NaN),
+               Specificity = c(1.000, 1.000))
+row.names(df) <- c("Train", "Test")
+print(df)
+```
+
+
+
+
+
+
+

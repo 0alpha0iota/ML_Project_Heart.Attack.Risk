@@ -1,0 +1,152 @@
+---
+title: "LASSO"
+author: "Haoyang Zhang"
+date: "2024-05-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import_dataset}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL
+```
+
+```{r encoding}
+# factors
+factors <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in factors) {
+  dataset[[var]] <- as.factor(dataset[[var]])
+}
+```
+
+```{r spliting}
+set.seed(2024)
+N <- nrow(dataset)
+train_indices <- sample(1:N, size = N*0.7)
+train_set <- dataset[train_indices, ]
+test_set <- dataset[-train_indices, ]
+```
+
+```{r classificantion_threshold}
+threshold <- mean(as.integer(dataset$Heart.Attack.Risk) - 1)
+```
+
+
+```{r standardize, warning=TRUE}
+library(glmnet)
+library(caret)
+x_tr <- as.matrix(train_set[, -26])
+y_tr <- train_set[, 26]
+x_te <- as.matrix(test_set[, -26])
+y_te <- test_set[, 26]
+std_fit <- preProcess(x_tr, method = c("center", "scale"))
+x_tr_std <- predict(std_fit, x_tr)
+x_te_std <- predict(std_fit, x_te)
+```
+
+```{r ridge}
+fit_ridge <- glmnet(x_tr_std, as.numeric(y_tr), family = "binomial", alpha = 0)
+library(plotmo)
+plot_glmnet(fit_ridge, label = TRUE)
+```
+
+
+```{r LASSO}
+fit_lasso <- glmnet(x_tr_std, as.numeric(y_tr), family = "binomial", alpha = 1)
+library(plotmo)
+plot_glmnet(fit_lasso, label = TRUE)
+```
+
+
+```{r}
+x <- as.matrix(dataset[, -26])
+y <- dataset[, 26]
+std_fit <- preProcess(x, method = c("center", "scale"))
+x_std <- predict(std_fit, x)
+```
+
+```{r cv_ridge}
+cv_fit_ridge <- cv.glmnet(x_std, as.numeric(y), family = "binomial", alpha = 0)
+plot(cv_fit_ridge)
+best_lambda_ridge <- cv_fit_ridge$lambda.min
+
+ridge_best <- glmnet(x_tr_std, as.numeric(y_tr), alpha = 0, 
+                     family = "binomial", lambda = best_lambda_ridge)
+```
+
+
+
+
+
+```{r cv_LASSO}
+cv_fit_lasso <- cv.glmnet(x_std, as.numeric(y), family = "binomial", alpha = 1)
+plot(cv_fit_lasso)
+best_lambda_lasso <- cv_fit_lasso$lambda.min
+```
+
+
+
+
+```{r}
+lasso_best <- glmnet(x_tr_std, as.numeric(y_tr), alpha = 1, 
+                     family = "binomial", lambda = best_lambda_lasso)
+```
+
+```{r}
+# training
+lasso_pred_tr <- predict(lasso_best, x_tr_std, type = "class")
+lasso_table_tr <- table(lasso_pred_tr, as.matrix(y_tr))
+TP <- lasso_table_tr[1, 2]
+FP <- lasso_table_tr[1, 1]
+TN <- 0
+FN <- 0
+error_tr <- mean(lasso_pred_tr != y_tr)
+accura_tr <- 1 - error_tr
+sn_tr <- TP / TP + FN
+sp_tr <- TN / TN + FP
+```
+
+```{r}
+# testing
+lasso_pred_te <- predict(lasso_best, x_te_std, type = "class")
+lasso_table_te <- table(lasso_pred_te, as.matrix(y_te))
+TP <- lasso_table_te[1, 2]
+FP <- lasso_table_te[1, 1]
+TN <- 0
+FN <- 0
+error_te <- mean(lasso_pred_te != y_te)
+accura_te <- 1 - error_te
+sn_te <- TP / TP + FN
+sp_te <- TN / TN + FP
+```
+
+```{r}
+# output
+df <- data.frame(Accuracy = c(accura_tr, accura_te),
+               Error = c(error_tr, error_te),
+               Sensitivity = c(sn_tr, sn_te),
+               Specificity = c(sp_tr, sp_te))
+row.names(df) <- c("Train", "Test")
+print(round(df, 3))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 

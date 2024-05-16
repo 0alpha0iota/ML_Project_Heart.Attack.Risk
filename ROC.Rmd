@@ -1,0 +1,71 @@
+---
+title: "ROC"
+author: "Haoyang Zhang"
+date: "2024-05-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r logit}
+logit <- glm(Heart.Attack.Risk ~ Cholesterol + 
+               Diabetes + Sleep.Hours.Per.Day, 
+             family = "binomial", data = train_set)
+logit_pred <- predict(logit, test_set, type = "response")
+logit_roc <- roc(test_set$Heart.Attack.Risk, logit_pred)
+logit_auc <- auc(logit_roc)
+```
+
+```{r LDA}
+lda <- lda(Heart.Attack.Risk ~ Cholesterol + 
+               Diabetes + Sleep.Hours.Per.Day, data = train_set)
+lda_pred <- predict(lda, test_set)$posterior[, 2]
+lda_roc <- roc(test_set$Heart.Attack.Risk, lda_pred)
+lda_auc <- auc(lda_roc)
+```
+
+```{r KNN}
+knn <- knn3(Heart.Attack.Risk ~ ., data = train_set_scaled, k = 100)
+knn_pred <- predict(knn, newdata = test_set_scaled, type = "prob")
+knn_roc <- roc(test_set_scaled$Heart.Attack.Risk, knn_pred[, 2])
+knn_auc <- auc(knn_roc)
+```
+
+```{r rf}
+rf <- randomForest(Heart.Attack.Risk ~ Country + Income + Triglycerides +
+                         Physical.Activity.Days.Per.Week + Systolic, 
+                       data = train_set, importance = TRUE)
+rf_pred <- predict(rf, test_set, type = "prob")
+rf_roc <- roc(test_set$Heart.Attack.Risk, rf_pred[, 2])
+rf_auc <- auc(rf_roc)
+```
+
+```{r LASSO}
+lasso <- glmnet(x_tr_std, as.numeric(y_tr), alpha = 1, 
+                     family = "binomial", lambda = best_lambda_lasso)
+lasso_pred <- predict(lasso, x_te_std, type = "response")
+lasso_roc <- roc(y_te, lasso_pred)
+lasso_auc <- auc(lasso_roc)
+```
+
+
+```{r roc_plot}
+
+rocobjs <- list(Logistic = logit_roc, 
+                LDA = lda_roc,
+                KNN = knn_roc,
+                RandomForest = rf_roc,
+                LASSO = lasso_roc)
+
+methods_auc <- paste(c("Logistic", "LDA", "KNN", "Random Forest", "LASSO"),
+                     "AUC = ",
+                     round(c(logit_auc, lda_auc, knn_auc, rf_auc, lasso_auc), 3))
+
+ggroc(rocobjs, size = 1, alpha = 0.5) + 
+  scale_color_discrete(labels = methods_auc)
+
+```
+

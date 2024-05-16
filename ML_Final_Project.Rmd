@@ -1,0 +1,627 @@
+---
+title: "ML_Final_Project"
+author: "Haoyang Zhang"
+output: pdf_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      fig.align = "center", eval = TRUE)
+```
+
+# 0 Initialiaztion
+
+```{r require_packages}
+# Data manipulation
+library(dplyr)
+library(tidyverse)
+
+# preprocess
+library(stats)
+
+# Models packages
+library(MASS)
+library(ISLR)
+library(leaps)
+library(pROC)
+library(glmnet)
+library(boot)
+library(caret)
+library(randomForest)
+library(gbm)
+library(car)
+
+# Plottings
+library(ggplot2)
+library(ggfortify)
+library(GGally)
+library(kableExtra)
+library(cowplot)
+library(corrplot)
+library(reshape2)
+library(pROC)
+```
+
+
+# 1 Preprocessing
+
+## i. Importing Original Dataset
+
+```{r import_data}
+heart_attack <- read.csv("heart_attack_prediction_dataset.csv")
+```
+
+## ii. Splitting Blood Pressure Variable into Systolic & Diastolic
+
+```{r split_bp}
+split_bp <- do.call(rbind, strsplit(heart_attack$Blood.Pressure, split = "/"))
+
+
+heart_attack$Systolic <- as.integer(split_bp[, 1])
+heart_attack$Diastolic <- as.integer(split_bp[, 2])
+
+
+heart_attack <- heart_attack[, -which(names(heart_attack) == "Blood.Pressure")]
+
+
+bp_position <- which(names(heart_attack) == "Cholesterol") + 1
+heart_attack <- heart_attack[, c(1:bp_position - 1, 
+                                 (ncol(heart_attack)-1):ncol(heart_attack), 
+                                 bp_position:(ncol(heart_attack)-2))
+                             ]
+# Retrieval Set
+write.csv(heart_attack, "heart_attack.csv")
+```
+
+## iii. Encode Dataset
+
+```{r factorize_categoricals}
+categoricals <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in categoricals) {
+  heart_attack[[var]] <- factor(heart_attack[[var]])
+}
+```
+
+In all categorical variables `Diet`, `Stress.Level` and `Physical.Activity.Days.Per.Week` are ordinal. However `Stress.Level` and `Physical.Activity.Days.Per.Week` are originally coded in integers and we have already factorized them, therefore we shall now encode `Diet`. 
+
+```{r encode_diet}
+levels_diet <- c("Unhealthy", "Average", "Healthy")
+codes_diet <- c(-1, 0, 1)
+names(codes_diet) <- levels_diet
+heart_attack$Diet <- factor(codes_diet[heart_attack$Diet])
+class(heart_attack$Diet)
+print(codes_diet)
+```
+
+The rest of categoricals are either binary (YES or NO) or stored as characters. We shall leave those binary since they have already been encoded as 1 or 0. The character variables in this dataset are all nominal except `Diet`, `Stress.Level` and `Physical.Activity.Days.Per.Week`. Thus we could assign them with arbitrary integers. 
+
+```{r encode_nominals}
+nominals <- c("Sex", "Country", "Continent", "Hemisphere")
+
+# Initialize an empty list to store encoding details
+codebook <- list()
+
+for (var in nominals) {
+  
+  # Get unique levels and create an encoding mapping from 1 to N
+  levels_set <- levels(heart_attack[[var]])
+  encoding_map <- setNames(seq_along(levels_set), levels_set)
+    
+  # Apply encoding
+  heart_attack[[var]] <- as.integer(heart_attack[[var]])
+  
+  # Record the encoding in the codebook
+  codebook[[var]] <- data.frame(
+    Level = levels_set,
+    Code = as.integer(encoding_map[levels_set])
+  )
+    
+}
+```
+
+```{r codebook}
+# add Diet into codebook
+codebook[["Diet"]] <- as.data.frame(codes_diet)
+print(codebook)
+```
+
+```{r record_numeralized_dataset}
+heart_attack$Patient.ID <- NULL
+write.csv(heart_attack, "dataset.csv")
+
+# Use modified dataset in following procedures
+dataset <- read.csv("dataset.csv")
+```
+
+
+# 2 Exploratory Analysis
+
+```{r import_dataset}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL
+```
+
+```{r encoding}
+# factors
+factors <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in factors) {
+  dataset[[var]] <- as.factor(dataset[[var]])
+}
+```
+
+Correlation matrix for continuous variables. 
+
+```{r correlation_heatmap}
+numerics <- c("Age", "Cholesterol", "Systolic", "Diastolic", "Heart.Rate",
+              "Exercise.Hours.Per.Week", "Sedentary.Hours.Per.Day", 
+              "Income", "BMI", "Triglycerides")
+cor_matrix <- cor(dataset[numerics])
+# Melt the correlation matrix
+melted_cor_matrix <- melt(cor_matrix)
+
+ggplot(melted_cor_matrix, aes(Var1, Var2, fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(fill = "Correlation", x = "", y = "")
+```
+
+```{r boxplots}
+boxplot(Age ~ Heart.Attack.Risk, data = dataset, 
+        main = "Age v.s. Response")
+boxplot(BMI ~ Heart.Attack.Risk, data = dataset, 
+        main = "BMI v.s. Response")
+boxplot(Cholesterol ~Heart.Attack.Risk, data = dataset,
+        main = "Cholesterol Level v.s. Response")
+boxplot(Exercise.Hours.Per.Week ~Heart.Attack.Risk, data = dataset,
+        main = "Exercise v.s. Response")
+boxplot(BMI ~ Obesity, data = dataset,
+        main = "BMI v.s. Obesity")
+```
+
+```{r test_BMI_Obesity}
+BMI1 <- dataset$BMI[dataset$Obesity == 0]
+BMI2 <- dataset$BMI[dataset$Obesity == 1]
+t.test(BMI1, BMI2)
+```
+
+
+
+# 3 Modelling & Evaluation
+
+
+## i. Partition Dataset
+
+Considering the number of observations is sufficient, and wishing of the testing results as accurate as possible, decided to assign 70% of total sample to testing set. 
+
+```{r spliting}
+set.seed(2024)
+N <- nrow(dataset)
+train_indices <- sample(1:N, size = N*0.7)
+train_set <- dataset[train_indices, ]
+test_set <- dataset[-train_indices, ]
+```
+
+```{r classificantion_threshold}
+threshold <- mean(as.integer(dataset$Heart.Attack.Risk) - 1)
+```
+
+
+## ii. Logistic Regression
+
+```{r logit_fit}
+logit_full_fit <- glm(Heart.Attack.Risk ~ ., data = train_set, family = "binomial")
+summary(logit_full_fit)
+```
+
+```{r full_logit_error}
+# training error
+pred_train_prob <- predict(logit_full_fit, newdata = train_set, type = "response")
+pred_train_label <- ifelse(pred_train_prob > 0.5, 1, 0)
+table(pred_train_label, train_set$Heart.Attack.Risk)
+train_error_logit <- mean(pred_train_label != train_set$Heart.Attack.Risk)
+train_error_logit
+
+# testing error
+pred_test_prob <- predict(logit_full_fit, newdata = test_set, type = "response")
+pred_test_label <- ifelse(pred_test_prob > 0.5, 1, 0)
+table(pred_test_label, test_set$Heart.Attack.Risk)
+test_error_logit <- mean(pred_test_label != test_set$Heart.Attack.Risk)
+test_error_logit
+```
+
+Conduct stepwise model selection from both sides based on AIC. 
+
+```{r logit_step_select}
+logit_null_fit <- glm(Heart.Attack.Risk ~ 1, data = train_set, family = "binomial")
+
+logit_model <- stepAIC(logit_full_fit, 
+                       scope = list(lower = logit_null_fit, upper = logit_full_fit), 
+                       direction = "both", trace = FALSE, k = 2)
+
+summary(logit_model)
+```
+
+```{r logit_errors}
+# training error
+pred_train_prob <- predict(logit_model, newdata = train_set, type = "response")
+pred_train_label <- ifelse(pred_train_prob > 0.5, 1, 0)
+table(pred_train_label, train_set$Heart.Attack.Risk)
+train_error_logit <- mean(pred_train_label != train_set$Heart.Attack.Risk)
+train_error_logit
+
+# testing error
+pred_test_prob <- predict(logit_model, newdata = test_set, type = "response")
+pred_test_label <- ifelse(pred_test_prob > 0.5, 1, 0)
+table(pred_test_label, test_set$Heart.Attack.Risk)
+test_error_logit <- mean(pred_test_label != test_set$Heart.Attack.Risk)
+test_error_logit                                                     
+```
+
+The train-test evaluation results of logistic regression are not ideal, both for the full model and the model after stepwise selection. 
+<br/>
+In terms of the Cross Validation evaluation, since our sample size is relatively large, decided to use k-folds CV in order to keep computational costs in check. $k = 8$ is chosen so that for each fold there is roughly 1000 observations ensuring the training sets are reasonably representative. 
+
+```{r logit_CV}
+# record the best subset according the AIC selection
+best_subset <- as.formula("Heart.Attack.Risk ~ Cholesterol + Diabetes + Sleep.Hours.Per.Day")
+
+my_cost <- function(r, pi = 0) {
+  pred_lab <- pi > 0.5
+  mean(pred_lab != r)
+}
+
+mod <- glm(best_subset, 
+           family = "binomial", data = dataset)
+cv.glm(dataset, mod, cost = my_cost, K=8)$delta[1]
+```
+
+
+## iii. KNN modelling & CV
+
+Standardize the dataset since KNN is distance sensitive. 
+
+```{r standardize}
+preProcValues <- preProcess(dataset, method = c("center", "scale"))
+dataset_scaled <- predict(preProcValues, dataset)
+```
+
+
+```{r knn_CV}
+k <- 8
+N <- nrow(dataset_scaled)
+fold_ind <- sample(1:k, N, replace = TRUE)
+K_seq <- seq(from = 1, to = 300, by = 30)
+CV_error_seq <- sapply(K_seq, function(K_cur) {
+  mean(sapply(1:k, function(j) {
+    fit_knn <- knn3(best_subset, 
+                    data = dataset_scaled[fold_ind != j, ], k = K_cur)
+    pred_knn <- predict(fit_knn, newdata = dataset_scaled[fold_ind == j, ], type = "class")
+    mean(pred_knn != dataset_scaled$Heart.Attack.Risk[fold_ind == j])
+  }))
+})
+
+KNN_errors <- data.frame(K = K_seq,
+                         Errors = CV_error_seq)
+print(KNN_errors)
+```
+
+
+```{r knn_err_plot}
+ggplot(KNN_errors, mapping = aes(x = K, y = CV_error_seq)) +
+  geom_point(size = 2) +
+  geom_line(size = 2)
+```
+
+```{r}
+N <- nrow(dataset_scaled)
+train_indices <- sample(1:N, size = N*0.7)
+train_set_scaled <- dataset_scaled[train_indices, ]
+test_set_scaled <- dataset_scaled[-train_indices, ]
+```
+
+
+```{r}
+knn_mod <- knn3(Heart.Attack.Risk ~ ., data = train_set, k = 100)
+```
+
+
+```{r errors}
+# training error
+pred_train_class <- predict(knn_mod, train_set_scaled, type = "class")
+tr_confmat <- confusionMatrix(pred_train_class, train_set_scaled$Heart.Attack.Risk)
+accura_tr <- tr_confmat$overall['Accuracy']
+error_tr <- 1 - accura_tr
+sn_tr <- tr_confmat$byClass['Sensitivity']
+sp_tr <- tr_confmat$byClass['Specificity']
+
+# testing error
+pred_test_class <- predict(knn_mod, test_set_scaled, type = "class")
+te_confmat <- confusionMatrix(pred_test_class, test_set_scaled$Heart.Attack.Risk)
+accura_te <- te_confmat$overall['Accuracy']
+error_te <- 1 - accura_te
+sn_te <- te_confmat$byClass['Sensitivity']
+sp_te <- te_confmat$byClass['Specificity']
+
+# output
+
+df <- data.frame(Accuracy = c(accura_tr, accura_te),
+               Error = c(error_tr, error_te),
+               Sensitivity = c(sn_tr, sn_te),
+               Specificity = c(sp_tr, sp_te))
+row.names(df) <- c("Train", "Test")
+print(round(df, 3))
+```
+
+## iv. Discriminant Analysis
+
+```{r}
+# record the best subset according the AIC selection
+best_subset <- as.formula("Heart.Attack.Risk ~ Cholesterol + Diabetes + Sleep.Hours.Per.Day")
+```
+
+```{r lda_fit}
+lda_fit <- lda(best_subset, data = train_set)
+lda_fit
+```
+
+```{r lda_err}
+# training
+lda_pred <- predict(lda_fit, train_set)
+lda_class <- lda_pred$class
+mean(lda_class != train_set$Heart.Attack.Risk)
+table(lda_class, train_set$Heart.Attack.Risk)
+# testing
+lda_pred <- predict(lda_fit, test_set)
+lda_class <- lda_pred$class
+mean(lda_class != test_set$Heart.Attack.Risk)
+table(lda_class, test_set$Heart.Attack.Risk)
+```
+
+
+## v. Random Forest
+
+```{r}
+rf_fit <- randomForest(Heart.Attack.Risk ~ ., data = train_set, importance = TRUE)
+rf_pred <- predict(rf_fit, newdata = test_set)
+mean((rf_pred != test_set$Heart.Attack.Risk)**2)
+```
+
+```{r}
+importance(rf_fit)
+varImpPlot(rf_fit)
+```
+
+```{r}
+rf_mod <- randomForest(Heart.Attack.Risk ~ Country + Income + Triglycerides +
+                         Physical.Activity.Days.Per.Week + Systolic, 
+                       data = train_set, importance = TRUE)
+```
+
+```{r}
+# training
+rf_pred_tr <- predict(rf_mod, train_set, type = "response")
+rf_confmat_tr <- confusionMatrix(rf_pred_tr, train_set$Heart.Attack.Risk)
+accura_tr <- rf_confmat_tr$overall['Accuracy']
+error_tr <- 1 - accura_tr
+sn_tr <- rf_confmat_tr$byClass['Sensitivity']
+sp_tr <- rf_confmat_tr$byClass['Specificity']
+
+# testing
+rf_pred_te <- predict(rf_mod, test_set, type = "response")
+rf_confmat_te <- confusionMatrix(rf_pred_te, test_set$Heart.Attack.Risk)
+accura_te <- rf_confmat_te$overall['Accuracy']
+error_te <- 1 - accura_te
+sn_te <- rf_confmat_te$byClass['Sensitivity']
+sp_te <- rf_confmat_te$byClass['Specificity']
+
+# output
+df <- data.frame(Accuracy = c(accura_tr, accura_te),
+               Error = c(error_tr, error_te),
+               Sensitivity = c(sn_tr, sn_te),
+               Specificity = c(sp_tr, sp_te))
+row.names(df) <- c("Train", "Test")
+print(round(df, 3))
+```
+
+## vi. LASSO
+
+```{r, warning=TRUE}
+library(glmnet)
+library(caret)
+x_tr <- as.matrix(train_set[, -26])
+y_tr <- train_set[, 26]
+x_te <- as.matrix(test_set[, -26])
+y_te <- test_set[, 26]
+std_fit <- preProcess(x_tr, method = c("center", "scale"))
+x_tr_std <- predict(std_fit, x_tr)
+x_te_std <- predict(std_fit, x_te)
+```
+
+```{r}
+x <- as.matrix(dataset[, -26])
+y <- dataset[, 26]
+std_fit <- preProcess(x, method = c("center", "scale"))
+x_std <- predict(std_fit, x)
+```
+
+```{r}
+fit_lasso <- glmnet(x_tr_std, as.numeric(y_tr), family = "binomial", alpha = 1)
+library(plotmo)
+plot_glmnet(fit_lasso, label = TRUE)
+```
+
+
+```{r scale_total_sample}
+x <- as.matrix(dataset[, -26])
+y <- dataset[, 26]
+std_fit <- preProcess(x, method = c("center", "scale"))
+x_std <- predict(std_fit, x)
+```
+
+
+```{r cv_LASSO}
+cv_fit_lasso <- cv.glmnet(x_std, as.numeric(y), family = "binomial", alpha = 1)
+plot(cv_fit_lasso)
+best_lambda_lasso <- cv_fit_lasso$lambda.min
+```
+
+```{r}
+lasso_best <- glmnet(x_tr_std, as.numeric(y_tr), alpha = 1, 
+                     family = "binomial", lambda = best_lambda_lasso)
+```
+
+```{r}
+# training
+lasso_pred_tr <- predict(lasso_best, x_tr_std, type = "class")
+lasso_table_tr <- table(lasso_pred_tr, as.matrix(y_tr))
+TP <- lasso_table_tr[1, 2]
+FP <- lasso_table_tr[1, 1]
+TN <- 0
+FN <- 0
+error_tr <- mean(lasso_pred_tr != y_tr)
+accura_tr <- 1 - error_tr
+sn_tr <- TP / TP + FN
+sp_tr <- TN / TN + FP
+```
+
+```{r}
+# testing
+lasso_pred_te <- predict(lasso_best, x_te_std, type = "class")
+lasso_table_te <- table(lasso_pred_te, as.matrix(y_te))
+TP <- lasso_table_te[1, 2]
+FP <- lasso_table_te[1, 1]
+TN <- 0
+FN <- 0
+error_te <- mean(lasso_pred_te != y_te)
+accura_te <- 1 - error_te
+sn_te <- TP / TP + FN
+sp_te <- TN / TN + FP
+```
+
+```{r}
+# output
+df <- data.frame(Accuracy = c(accura_tr, accura_te),
+               Error = c(error_tr, error_te),
+               Sensitivity = c(sn_tr, sn_te),
+               Specificity = c(sp_tr, sp_te))
+row.names(df) <- c("Train", "Test")
+print(round(df, 3))
+```
+
+## vii. ROC
+
+```{r logit}
+logit <- glm(Heart.Attack.Risk ~ Cholesterol + 
+               Diabetes + Sleep.Hours.Per.Day, 
+             family = "binomial", data = train_set)
+logit_pred <- predict(logit, test_set, type = "response")
+logit_roc <- roc(test_set$Heart.Attack.Risk, logit_pred)
+logit_auc <- auc(logit_roc)
+```
+
+```{r LDA}
+lda <- lda(Heart.Attack.Risk ~ Cholesterol + 
+               Diabetes + Sleep.Hours.Per.Day, data = train_set)
+lda_pred <- predict(lda, test_set)$posterior[, 2]
+lda_roc <- roc(test_set$Heart.Attack.Risk, lda_pred)
+lda_auc <- auc(lda_roc)
+```
+
+```{r KNN}
+knn <- knn3(Heart.Attack.Risk ~ ., data = train_set_scaled, k = 100)
+knn_pred <- predict(knn, newdata = test_set_scaled, type = "prob")
+knn_roc <- roc(test_set_scaled$Heart.Attack.Risk, knn_pred[, 2])
+knn_auc <- auc(knn_roc)
+```
+
+```{r rf}
+rf <- randomForest(Heart.Attack.Risk ~ Country + Income + Triglycerides +
+                         Physical.Activity.Days.Per.Week + Systolic, 
+                       data = train_set, importance = TRUE)
+rf_pred <- predict(rf, test_set, type = "prob")
+rf_roc <- roc(test_set$Heart.Attack.Risk, rf_pred[, 2])
+rf_auc <- auc(rf_roc)
+```
+
+```{r LASSO}
+lasso <- glmnet(x_tr_std, as.numeric(y_tr), alpha = 1, 
+                     family = "binomial", lambda = best_lambda_lasso)
+lasso_pred <- predict(lasso, x_te_std, type = "response")
+lasso_roc <- roc(y_te, lasso_pred)
+lasso_auc <- auc(lasso_roc)
+```
+
+
+```{r roc_plot}
+
+rocobjs <- list(Logistic = logit_roc, 
+                LDA = lda_roc,
+                KNN = knn_roc,
+                RandomForest = rf_roc,
+                LASSO = lasso_roc)
+
+methods_auc <- paste(c("Logistic", "LDA", "KNN", "Random Forest", "LASSO"),
+                     "AUC = ",
+                     round(c(logit_auc, lda_auc, knn_auc, rf_auc, lasso_auc), 3))
+
+ggroc(rocobjs, size = 1, alpha = 0.5) + 
+  scale_color_discrete(labels = methods_auc)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

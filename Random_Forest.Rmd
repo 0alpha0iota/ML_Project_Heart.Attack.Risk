@@ -1,0 +1,85 @@
+---
+title: "Random_Forest"
+author: "Haoyang Zhang"
+date: "2024-05-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import_dataset}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL
+```
+
+```{r encoding}
+# factors
+factors <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in factors) {
+  dataset[[var]] <- as.factor(dataset[[var]])
+}
+```
+
+```{r spliting}
+set.seed(2024)
+N <- nrow(dataset)
+train_indices <- sample(1:N, size = N*0.7)
+train_set <- dataset[train_indices, ]
+test_set <- dataset[-train_indices, ]
+```
+
+```{r classificantion_threshold}
+threshold <- mean(as.integer(dataset$Heart.Attack.Risk) - 1)
+```
+
+```{r}
+rf_fit <- randomForest(Heart.Attack.Risk ~ ., data = train_set, importance = TRUE)
+rf_pred <- predict(rf_fit, newdata = test_set)
+mean((rf_pred != test_set$Heart.Attack.Risk)**2)
+```
+
+```{r}
+importance(rf_fit)
+varImpPlot(rf_fit)
+```
+
+```{r}
+rf_mod <- randomForest(Heart.Attack.Risk ~ Country + Income + Triglycerides +
+                         Physical.Activity.Days.Per.Week + Systolic, 
+                       data = train_set, importance = TRUE)
+```
+
+```{r}
+# training
+rf_pred_tr <- predict(rf_mod, train_set, type = "response")
+rf_confmat_tr <- confusionMatrix(rf_pred_tr, train_set$Heart.Attack.Risk)
+accura_tr <- rf_confmat_tr$overall['Accuracy']
+error_tr <- 1 - accura_tr
+sn_tr <- rf_confmat_tr$byClass['Sensitivity']
+sp_tr <- rf_confmat_tr$byClass['Specificity']
+
+# testing
+rf_pred_te <- predict(rf_mod, test_set, type = "response")
+rf_confmat_te <- confusionMatrix(rf_pred_te, test_set$Heart.Attack.Risk)
+accura_te <- rf_confmat_te$overall['Accuracy']
+error_te <- 1 - accura_te
+sn_te <- rf_confmat_te$byClass['Sensitivity']
+sp_te <- rf_confmat_te$byClass['Specificity']
+
+# output
+df <- data.frame(Accuracy = c(accura_tr, accura_te),
+               Error = c(error_tr, error_te),
+               Sensitivity = c(sn_tr, sn_te),
+               Specificity = c(sp_tr, sp_te))
+row.names(df) <- c("Train", "Test")
+print(round(df, 3))
+```
+
+
+
+

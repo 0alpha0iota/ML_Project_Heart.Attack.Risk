@@ -1,0 +1,118 @@
+---
+title: "Logit_AIC_CV"
+author: "Haoyang Zhang"
+date: "2024-05-07"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import_dataset}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL
+```
+
+```{r encoding}
+# factors
+factors <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in factors) {
+  dataset[[var]] <- as.factor(dataset[[var]])
+}
+```
+
+```{r spliting}
+set.seed(2024)
+N <- nrow(dataset)
+train_indices <- sample(1:N, size = N*0.7)
+train_set <- dataset[train_indices, ]
+test_set <- dataset[-train_indices, ]
+```
+
+```{r classificantion_threshold}
+threshold <- mean(as.integer(dataset$Heart.Attack.Risk) - 1)
+```
+
+```{r logit_fit}
+logit_full_fit <- glm(Heart.Attack.Risk ~ ., data = train_set, family = "binomial")
+summary(logit_full_fit)
+```
+
+```{r full_logit_error}
+# training error
+pred_train_prob <- predict(logit_full_fit, newdata = train_set, type = "response")
+pred_train_label <- ifelse(pred_train_prob > 0.5, 1, 0)
+table(pred_train_label, train_set$Heart.Attack.Risk)
+train_error_logit <- mean(pred_train_label != train_set$Heart.Attack.Risk)
+train_error_logit
+
+# testing error
+pred_test_prob <- predict(logit_full_fit, newdata = test_set, type = "response")
+pred_test_label <- ifelse(pred_test_prob > 0.5, 1, 0)
+table(pred_test_label, test_set$Heart.Attack.Risk)
+test_error_logit <- mean(pred_test_label != test_set$Heart.Attack.Risk)
+test_error_logit
+```
+
+```{r logit_step_select}
+logit_null_fit <- glm(Heart.Attack.Risk ~ 1, data = train_set, family = "binomial")
+
+logit_model <- stepAIC(logit_full_fit, 
+                       scope = list(lower = logit_null_fit, upper = logit_full_fit), 
+                       direction = "both", trace = FALSE, k = 2)
+
+summary(logit_model)
+```
+
+```{r logit_errors}
+# training error
+pred_train_prob <- predict(logit_model, newdata = train_set, type = "response")
+pred_train_label <- ifelse(pred_train_prob > 0.5, 1, 0)
+table(pred_train_label, train_set$Heart.Attack.Risk)
+train_error_logit <- mean(pred_train_label != train_set$Heart.Attack.Risk)
+train_error_logit
+
+# testing error
+pred_test_prob <- predict(logit_model, newdata = test_set, type = "response")
+pred_test_label <- ifelse(pred_test_prob > 0.5, 1, 0)
+table(pred_test_label, test_set$Heart.Attack.Risk)
+test_error_logit <- mean(pred_test_label != test_set$Heart.Attack.Risk)
+test_error_logit                                                     
+```
+
+```{r}
+roc_obj_logit <- roc(train_set$Heart.Attack.Risk, pred_train_prob)
+auc_logit <- auc(roc_obj_logit)
+ggroc(roc_obj_logit, size = 2) + ggtitle(paste("AUC = "), round(auc_logit, 3))
+```
+
+
+```{r logit_CV}
+# record the best subset according the AIC selection
+best_subset <- as.formula("Heart.Attack.Risk ~ Cholesterol + Diabetes + Sleep.Hours.Per.Day")
+
+my_cost <- function(r, pi = 0) {
+  pred_lab <- pi > 0.5
+  mean(pred_lab != r)
+}
+
+mod <- glm(best_subset, 
+           family = "binomial", data = dataset)
+cv.glm(dataset, mod, cost = my_cost, K=8)$delta[1]
+```
+
+```{r}
+df <- data.frame(Accuracy = c(0.640, 0.647),
+               Error = c(0.360, 0.353),
+               Sensitivity = c(NaN, NaN),
+               Specificity = c(1.000, 1.000))
+row.names(df) <- c("Train", "Test")
+print(df)
+```
+
+
+

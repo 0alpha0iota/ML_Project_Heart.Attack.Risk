@@ -1,0 +1,73 @@
+---
+title: "PCA_proj"
+author: "Haoyang Zhang"
+date: "2024-04-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## iv. Dimensionality Reduction by PCA
+
+```{r pca}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL # Indices useless column
+standardized.data <- scale(dataset)
+pca_result <- prcomp(standardized.data, center = TRUE, scale. = TRUE)
+summary(pca_result)
+```
+
+```{r}
+biplot(pca_result, scale = 1)
+```
+
+
+Compute the Percentage of Variance Explained (PVE):
+
+```{r pve}
+pca_var <- pca_result$sdev**2
+pve <- pca_var / sum(pca_var)
+pve
+```
+
+Visualize:
+
+```{r pve plots}
+
+# Proportion of variance explained by each PC
+plot(pve, xlab = "Principal Component", 
+     ylab = "Proportion of Variance Explained",
+     ylim = c(0, 0.07), type = "b")
+
+# Cumulative Proportion of variance explained
+plot(cumsum(pve), xlab = "Principal Component", 
+     ylab = "Proportion of Variance Explained",
+     ylim = c(0, 1), type = "b")
+
+```
+
+In order to construct predictive model, we want our dataset contains sufficient information when we conduct dimensionality reduction. Thus we choose to retain 90% total variance. 
+
+```{r reduce pc}
+num_pc <- which(cumsum(pve) >= 0.90)[1]
+num_pc
+```
+
+```{r}
+# Reconstruct dataset
+x <- pca_result$x[, 1:num_pc]
+rot <- pca_result$rotation[, 1:num_pc]
+
+# Reconstruct the data
+reconstructed_data <- x %*% t(rot)
+
+# If the data was centered and/or scaled, reverse these transformations
+if (!is.null(pca_result$center)) {
+    reconstructed_data <- scale(reconstructed_data, center = -pca_result$center, scale = FALSE)
+}
+if (!is.null(pca_result$scale)) {
+    reconstructed_data <- scale(reconstructed_data, center = FALSE, scale = 1/pca_result$scale)
+}
+```

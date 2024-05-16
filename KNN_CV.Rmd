@@ -1,0 +1,139 @@
+---
+title: "KNN_CV"
+author: "Haoyang Zhang"
+date: "2024-05-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+```
+
+
+```{r import_dataset}
+dataset <- read.csv("dataset.csv")
+dataset$X <- NULL
+```
+
+```{r encoding}
+# factors
+factors <- c("Sex", "Diabetes", "Family.History", "Smoking", "Obesity",
+                  "Alcohol.Consumption", "Diet", "Previous.Heart.Problems",
+                  "Medication.Use", "Stress.Level", "Physical.Activity.Days.Per.Week",
+                  "Country", "Continent", "Hemisphere", "Heart.Attack.Risk")
+for (var in factors) {
+  dataset[[var]] <- as.factor(dataset[[var]])
+}
+```
+
+```{r spliting}
+set.seed(2024)
+N <- nrow(dataset)
+train_indices <- sample(1:N, size = N*0.7)
+train_set <- dataset[train_indices, ]
+test_set <- dataset[-train_indices, ]
+```
+
+```{r classificantion_threshold}
+threshold <- mean(as.integer(dataset$Heart.Attack.Risk) - 1)
+```
+
+```{r standardize}
+preProcValues <- preProcess(dataset, method = c("center", "scale"))
+dataset_scaled <- predict(preProcValues, dataset)
+```
+
+
+```{r knn_CV}
+k <- 8
+N <- nrow(dataset_scaled)
+fold_ind <- sample(1:k, N, replace = TRUE)
+K_seq <- seq(from = 1, to = 300, by = 20)
+CV_error_seq <- sapply(K_seq, function(K_cur) {
+  mean(sapply(1:k, function(j) {
+    fit_knn <- knn3(Heart.Attack.Risk ~ ., 
+                    data = dataset_scaled[fold_ind != j, ], k = K_cur)
+    pred_knn <- predict(fit_knn, newdata = dataset_scaled[fold_ind == j, ], type = "class")
+    mean(pred_knn != dataset_scaled$Heart.Attack.Risk[fold_ind == j])
+  }))
+})
+
+KNN_errors <- data.frame(K = K_seq,
+                         Errors = CV_error_seq)
+print(KNN_errors)
+```
+
+
+
+```{r knn_err_plot}
+ggplot(KNN_errors, mapping = aes(x = K, y = CV_error_seq)) +
+  geom_point(size = 2) + geom_line(size = 1)
+```
+
+
+
+```{r}
+N <- nrow(dataset_scaled)
+train_indices <- sample(1:N, size = N*0.7)
+train_set_scaled <- dataset_scaled[train_indices, ]
+test_set_scaled <- dataset_scaled[-train_indices, ]
+```
+
+
+```{r}
+knn_mod <- knn3(Heart.Attack.Risk ~ ., data = train_set, k = 100)
+```
+
+
+```{r errors}
+# training error
+pred_train_class <- predict(knn_mod, train_set_scaled, type = "class")
+tr_confmat <- confusionMatrix(pred_train_class, train_set_scaled$Heart.Attack.Risk)
+accura_tr <- tr_confmat$overall['Accuracy']
+error_tr <- 1 - accura_tr
+sn_tr <- tr_confmat$byClass['Sensitivity']
+sp_tr <- tr_confmat$byClass['Specificity']
+
+# testing error
+pred_test_class <- predict(knn_mod, test_set_scaled, type = "class")
+te_confmat <- confusionMatrix(pred_test_class, test_set_scaled$Heart.Attack.Risk)
+accura_te <- te_confmat$overall['Accuracy']
+error_te <- 1 - accura_te
+sn_te <- te_confmat$byClass['Sensitivity']
+sp_te <- te_confmat$byClass['Specificity']
+
+# output
+
+df <- data.frame(Accuracy = c(accura_tr, accura_te),
+               Error = c(error_tr, error_te),
+               Sensitivity = c(sn_tr, sn_te),
+               Specificity = c(sp_tr, sp_te))
+row.names(df) <- c("Train", "Test")
+print(round(df, 3))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
